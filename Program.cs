@@ -1,36 +1,53 @@
 using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Говорок: нам нужен Swagger.
+// Swagger
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+// Подключаем базу данных
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+
+if (string.IsNullOrWhiteSpace(connectionString))
+{
+    throw new InvalidOperationException(
+        "Строка подключения 'DefaultConnection' не найдена в appsettings.json"
+    );
+}
+
+builder.Services.AddDbContext<WarehouseDbContext>(options =>
+{
+    options.UseNpgsql(connectionString);
+});
+
 var app = builder.Build();
 
-// Включаем Swagger.
+// Swagger UI
 app.UseSwagger();
 app.UseSwaggerUI(options =>
 {
     options.SwaggerEndpoint("/swagger/v1/swagger.json", "Warehouse API v1");
 });
 
-// Главная страница, чтобы быстро проверить, что сервер работает.
 app.MapGet("/", () => "Warehouse API is running. Open /swagger");
 
-// Временное хранилище товаров в памяти.
-var products = new List<Product>();
-
-// Получить все товары.
-app.MapGet("/api/products", () =>
+// Получить все товары
+app.MapGet("/api/products", async (WarehouseDbContext dbContext) =>
 {
+    var products = await dbContext.Products
+        .AsNoTracking()
+        .OrderBy(p => p.Id)
+        .ToListAsync();
+
     return Results.Ok(products);
 });
 
-// Получить один товар по id.
-app.MapGet("/api/product/{id:int}", (int id) =>
+// Получить один товар
+app.MapGet("/api/products/{id:int}", async (int id, WarehouseDbContext dbContext) =>
 {
-    var product = products.FirstOrDefault(p => p.Id == id);
+    var product = await dbContext.Products.FindAsync(id);
 
     if (product is null)
     {
@@ -43,8 +60,8 @@ app.MapGet("/api/product/{id:int}", (int id) =>
     return Results.Ok(product);
 });
 
-// Создать новый товар.
-app.MapPost("/api/products", (CreateProductRequest request) =>
+// Создать товар
+app.MapPost("/api/products", async (CreateProductRequest request, WarehouseDbContext dbContext) =>
 {
     if (string.IsNullOrWhiteSpace(request.Name))
     {
@@ -62,66 +79,23 @@ app.MapPost("/api/products", (CreateProductRequest request) =>
         });
     }
 
-    var nextId = products.Count == 0
-        ? 1
-        : products.Max(p => p.Id) + 1;
-
-    var product = new Product(
-        nextId,
-        request.Name.Trim(),
-        request.Price
-    );
-
-    products.Add(product);
-
-    return Results.Created($"/api/products/{product.Id}", product);
-});
-
-// Обновить товар по id.
-app.MapPut("/api/products/{id:int}", (int id, CreateProductRequest request) =>
-{
-    var product = products.FirstOrDefault(p => p.Id == id);
-
-    if (product is null)
-    {
-        return Results.NotFound(new
-        {
-            message = $"Товар с id {id} не найден"
-        });
-    }
-
-    if (string.IsNullOrWhiteSpace(request.Name))
-    {
-        return Results.BadRequest(new
-        {
-            message = "Название товара не может быть пустым"
-        });
-    }
-
-    if (request.Price < 0)
-    {
-        return Results.BadRequest(new
-        {
-            message = "Цена товара не может быть отрицательной"
-        });
-    }
-
-    var updatedProduct = product with
+    var product = new Product
     {
         Name = request.Name.Trim(),
         Price = request.Price
     };
 
-    var index = products.IndexOf(product);
-    products[index] = updatedProduct;
+    dbContext.Products.Add(product);
 
-    return Results.Ok(updatedProduct);
+    await dbContext.SaveChangesAsync();
+
+    return Results.Created($"/api/products/{product.Id}", product);
 });
 
-// Удалить товар по id.
-app.MapDelete("/api/products/{id:int}", (int id) =>
+// Обновить товар
+app.MapPut("/api/products/{id:int}", async (int id, CreateProductRequest request, WarehouseDbContext dbContext) =>
 {
-    var product = products.FirstOrDefault(p => p.Id == id);
+    var product = await dbContext.Products.FindAsync(id);
 
     if (product is null)
     {
@@ -131,16 +105,48 @@ app.MapDelete("/api/products/{id:int}", (int id) =>
         });
     }
 
-    products.Remove(product);
+    if (string.IsNullOrWhiteSpace(request.Name))
+    {
+        return Results.BadRequest(new
+        {
+            message = "Название товара не может быть пустым"
+        });
+    }
+
+    if (request.Price < 0)
+    {
+        return Results.BadRequest(new
+        {
+            message = "Цена товара не может быть отрицательной"
+        });
+    }
+
+    product.Name = request.Name.Trim();
+    product.Price = request.Price;
+
+    await dbContext.SaveChangesAsync();
+
+    return Results.Ok(product);
+});
+
+// Удалить товар
+app.MapDelete("/api/products/{id:int}", async (int id, WarehouseDbContext dbContext) =>
+{
+    var product = await dbContext.Products.FindAsync(id);
+
+    if (product is null)
+    {
+        return Results.NotFound(new
+        {
+            message = $"Товар с id {id} не найден"
+        });
+    }
+
+    dbContext.Products.Remove(product);
+
+    await dbContext.SaveChangesAsync();
 
     return Results.NoContent();
 });
 
-// Запускаем сервер на порту 5000.
 app.Run("http://localhost:5000");
-
-// Модель товара.
-record Product(int Id, string Name, decimal Price);
-
-// Модель для запроса на создание/обновление товара.
-record CreateProductRequest(string Name, decimal Price);
