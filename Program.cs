@@ -7,7 +7,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// Подключаем базу данных
+// База данных
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 
 if (string.IsNullOrWhiteSpace(connectionString))
@@ -22,6 +22,10 @@ builder.Services.AddDbContext<WarehouseDbContext>(options =>
     options.UseNpgsql(connectionString);
 });
 
+// Архитектура: регистрируем сервисы и репозитории
+builder.Services.AddScoped<IProductRepository, ProductRepository>();
+builder.Services.AddScoped<IProductService, ProductService>();
+
 var app = builder.Build();
 
 // Swagger UI
@@ -34,20 +38,17 @@ app.UseSwaggerUI(options =>
 app.MapGet("/", () => "Warehouse API is running. Open /swagger");
 
 // Получить все товары
-app.MapGet("/api/products", async (WarehouseDbContext dbContext) =>
+app.MapGet("/api/products", async (IProductService productService) =>
 {
-    var products = await dbContext.Products
-        .AsNoTracking()
-        .OrderBy(p => p.Id)
-        .ToListAsync();
+    var products = await productService.GetAllAsync();
 
     return Results.Ok(products);
 });
 
 // Получить один товар
-app.MapGet("/api/products/{id:int}", async (int id, WarehouseDbContext dbContext) =>
+app.MapGet("/api/products/{id:int}", async (int id, IProductService productService) =>
 {
-    var product = await dbContext.Products.FindAsync(id);
+    var product = await productService.GetByIdAsync(id);
 
     if (product is null)
     {
@@ -61,90 +62,61 @@ app.MapGet("/api/products/{id:int}", async (int id, WarehouseDbContext dbContext
 });
 
 // Создать товар
-app.MapPost("/api/products", async (CreateProductRequest request, WarehouseDbContext dbContext) =>
+app.MapPost("/api/products", async (CreateProductRequest request, IProductService productService) =>
 {
-    if (string.IsNullOrWhiteSpace(request.Name))
+    try
+    {
+        var product = await productService.CreateAsync(request);
+
+        return Results.Created($"/api/products/{product.Id}", product);
+    }
+    catch (ArgumentException ex)
     {
         return Results.BadRequest(new
         {
-            message = "Название товара не может быть пустым"
+            message = ex.Message
         });
     }
-
-    if (request.Price < 0)
-    {
-        return Results.BadRequest(new
-        {
-            message = "Цена товара не может быть отрицательной"
-        });
-    }
-
-    var product = new Product
-    {
-        Name = request.Name.Trim(),
-        Price = request.Price
-    };
-
-    dbContext.Products.Add(product);
-
-    await dbContext.SaveChangesAsync();
-
-    return Results.Created($"/api/products/{product.Id}", product);
 });
 
 // Обновить товар
-app.MapPut("/api/products/{id:int}", async (int id, CreateProductRequest request, WarehouseDbContext dbContext) =>
+app.MapPut("/api/products/{id:int}", async (int id, UpdateProductRequest request, IProductService productService) =>
 {
-    var product = await dbContext.Products.FindAsync(id);
-
-    if (product is null)
+    try
     {
-        return Results.NotFound(new
-        {
-            message = $"Товар с id {id} не найден"
-        });
-    }
+        var product = await productService.UpdateAsync(id, request);
 
-    if (string.IsNullOrWhiteSpace(request.Name))
-    {
-        return Results.BadRequest(new
+        if (product is null)
         {
-            message = "Название товара не может быть пустым"
-        });
-    }
+            return Results.NotFound(new
+            {
+                message = $"Товар с id {id} не найден"
+            });
+        }
 
-    if (request.Price < 0)
+        return Results.Ok(product);
+    }
+    catch (ArgumentException ex)
     {
         return Results.BadRequest(new
         {
-            message = "Цена товара не может быть отрицательной"
+            message = ex.Message
         });
     }
-
-    product.Name = request.Name.Trim();
-    product.Price = request.Price;
-
-    await dbContext.SaveChangesAsync();
-
-    return Results.Ok(product);
 });
 
 // Удалить товар
-app.MapDelete("/api/products/{id:int}", async (int id, WarehouseDbContext dbContext) =>
+app.MapDelete("/api/products/{id:int}", async (int id, IProductService productService) =>
 {
-    var product = await dbContext.Products.FindAsync(id);
+    var deleted = await productService.DeleteAsync(id);
 
-    if (product is null)
+    if (!deleted)
     {
         return Results.NotFound(new
         {
             message = $"Товар с id {id} не найден"
         });
     }
-
-    dbContext.Products.Remove(product);
-
-    await dbContext.SaveChangesAsync();
 
     return Results.NoContent();
 });
