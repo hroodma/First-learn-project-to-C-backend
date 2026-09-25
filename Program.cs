@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -7,7 +9,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// База данных
+// PostgreSQL
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 
 if (string.IsNullOrWhiteSpace(connectionString))
@@ -22,8 +24,29 @@ builder.Services.AddDbContext<WarehouseDbContext>(options =>
     options.UseNpgsql(connectionString);
 });
 
-// Архитектура: регистрируем сервисы и репозитории
-builder.Services.AddScoped<IProductRepository, ProductRepository>();
+// Redis
+var redisConnectionString = builder.Configuration.GetConnectionString("Redis")
+    ?? "localhost:6379";
+
+builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
+{
+    return ConnectionMultiplexer.Connect(redisConnectionString);
+});
+
+builder.Services.AddSingleton<IProductCache, RedisProductCache>();
+
+// Архитектура
+builder.Services.AddScoped<ProductRepository>();
+
+builder.Services.AddScoped<IProductRepository>(serviceProvider =>
+{
+    return new CachedProductRepository(
+        serviceProvider.GetRequiredService<ProductRepository>(),
+        serviceProvider.GetRequiredService<IProductCache>(),
+        serviceProvider.GetRequiredService<ILogger<CachedProductRepository>>()
+    );
+});
+
 builder.Services.AddScoped<IProductService, ProductService>();
 
 var app = builder.Build();
