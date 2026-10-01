@@ -1,4 +1,4 @@
-namespace First_learn_project
+namespace WarehouseApi
 {
     public class WeatherForecast
     {

@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 
-namespace First_learn_project.Controllers
+namespace WarehouseApi.Controllers
 {
     [ApiController]
     [Route("[controller]")]

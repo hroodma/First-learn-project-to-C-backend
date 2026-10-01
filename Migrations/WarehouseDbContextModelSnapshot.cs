@@ -6,7 +6,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 #nullable disable
 
-namespace First_learn_project.Migrations
+namespace WarehouseApi.Migrations
 {
     [DbContext(typeof(WarehouseDbContext))]
     partial class WarehouseDbContextModelSnapshot : ModelSnapshot

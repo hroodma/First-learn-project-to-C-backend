@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using StackExchange.Redis;
@@ -8,6 +9,9 @@ var builder = WebApplication.CreateBuilder(args);
 // Swagger
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+// gRPC
+builder.Services.AddGrpc();
 
 // PostgreSQL
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
@@ -35,6 +39,9 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
 
 builder.Services.AddSingleton<IProductCache, RedisProductCache>();
 
+// Kafka
+builder.Services.AddSingleton<IProductEventPublisher, KafkaProductEventPublisher>();
+
 // Архитектура
 builder.Services.AddScoped<ProductRepository>();
 
@@ -47,7 +54,32 @@ builder.Services.AddScoped<IProductRepository>(serviceProvider =>
     );
 });
 
-builder.Services.AddScoped<IProductService, ProductService>();
+builder.Services.AddScoped<ProductService>();
+
+builder.Services.AddScoped<IProductService>(serviceProvider =>
+{
+    return new EventingProductService(
+        serviceProvider.GetRequiredService<ProductService>(),
+        serviceProvider.GetRequiredService<IProductEventPublisher>(),
+        serviceProvider.GetRequiredService<ILogger<EventingProductService>>()
+    );
+});
+
+// Порты:
+// 5000 — обычный HTTP и Swagger
+// 5002 — gRPC
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.ListenLocalhost(5000, listen =>
+    {
+        listen.Protocols = HttpProtocols.Http1AndHttp2;
+    });
+
+    options.ListenLocalhost(5002, listen =>
+    {
+        listen.Protocols = HttpProtocols.Http2;
+    });
+});
 
 var app = builder.Build();
 
@@ -59,6 +91,9 @@ app.UseSwaggerUI(options =>
 });
 
 app.MapGet("/", () => "Warehouse API is running. Open /swagger");
+
+// gRPC endpoint
+app.MapGrpcService<WarehouseGrpcService>();
 
 // Получить все товары
 app.MapGet("/api/products", async (IProductService productService) =>
@@ -144,4 +179,4 @@ app.MapDelete("/api/products/{id:int}", async (int id, IProductService productSe
     return Results.NoContent();
 });
 
-app.Run("http://localhost:5000");
+app.Run();

@@ -7,7 +7,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 #nullable disable
 
-namespace First_learn_project.Migrations
+namespace WarehouseApi.Migrations
 {
     [DbContext(typeof(WarehouseDbContext))]
     [Migration("20260922103630_InitialCreate")]
